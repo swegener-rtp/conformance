@@ -95,6 +95,7 @@ wrap_warning() {
 }
 
 check_flag() {
+check_flag_result=0
 # shellcheck disable=SC2310
 	if is_set_in_kernel "$1"; then
 		wrap_good "CONFIG_$1" 'enabled'
@@ -102,11 +103,21 @@ check_flag() {
 		wrap_good "CONFIG_$1" 'enabled (as module)'
 	else
 		wrap_bad "CONFIG_$1" 'missing'
-		EXITCODE=1
+		check_flag_result=1
 	fi
 }
 
-check_flags() {
+check_required_flags() {
+	for flag in "$@"; do
+		printf -- '- '
+		check_flag "${flag}"
+		if [ "${check_flag_result}" -eq 1 ]; then
+			EXITCODE=1
+		fi
+	done
+}
+
+check_advisory_flags() {
 	for flag in "$@"; do
 		printf -- '- '
 		check_flag "${flag}"
@@ -187,11 +198,14 @@ if [ "$(cat /sys/module/apparmor/parameters/enabled 2> /dev/null)" = 'Y' ]; then
 	fi
 fi
 
-check_flags \
-	NAMESPACES NET_NS PID_NS IPC_NS UTS_NS \
-	CGROUPS CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_SCHED CPUSETS MEMCG \
-	KEYS \
-	VETH BRIDGE BRIDGE_NETFILTER \
+echo 'Required isolation capabilities:'
+check_required_flags \
+	NAMESPACES NET_NS PID_NS IPC_NS UTS_NS CGROUPS
+
+echo 'Advisory implementation-specific kernel features:'
+check_advisory_flags \
+	CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_SCHED CPUSETS MEMCG \
+	KEYS VETH BRIDGE BRIDGE_NETFILTER \
 	IP_NF_FILTER IP_NF_MANGLE IP_NF_TARGET_MASQUERADE \
 	IP6_NF_FILTER IP6_NF_MANGLE IP6_NF_TARGET_MASQUERADE \
 	NETFILTER_XT_MATCH_ADDRTYPE \
@@ -201,22 +215,21 @@ check_flags \
 	IP_NF_RAW IP_NF_NAT NF_NAT \
 	IP6_NF_RAW IP6_NF_NAT NF_NAT \
 	POSIX_MQUEUE
-# (POSIX_MQUEUE is required for bind-mounting /dev/mqueue into containers)
 
 if [ "${kernelMajor}" -lt 4 ] || { [ "${kernelMajor}" -eq 4 ] && [ "${kernelMinor}" -lt 8 ]; }; then
-	check_flags DEVPTS_MULTIPLE_INSTANCES
+	check_required_flags DEVPTS_MULTIPLE_INSTANCES
 fi
 
 if [ "${kernelMajor}" -lt 5 ] || { [ "${kernelMajor}" -eq 5 ] && [ "${kernelMinor}" -le 1 ]; }; then
-	check_flags NF_NAT_IPV4
+	check_required_flags NF_NAT_IPV4
 fi
 
 if [ "${kernelMajor}" -lt 5 ] || { [ "${kernelMajor}" -eq 5 ] && [ "${kernelMinor}" -le 2 ]; }; then
-	check_flags NF_NAT_NEEDED
+	check_required_flags NF_NAT_NEEDED
 fi
 # check availability of BPF_CGROUP_DEVICE support
 if [ "${kernelMajor}" -ge 5 ] || { [ "${kernelMajor}" -eq 4 ] && [ "${kernelMinor}" -ge 15 ]; }; then
-	check_flags CGROUP_BPF
+	check_required_flags CGROUP_BPF
 fi
 
 echo
